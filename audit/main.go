@@ -53,29 +53,33 @@ const tmpl = `
 {{ $INFO := printf "%s[INFO]%s " $ColorGreen $ColorReset }}
 {{ $DEBUG := printf "%s[DEBUG]%s " $ColorCyan $ColorReset }}
 {{ $nBackends := 0 }}
-{{ $hasJWT := false }}
+{{ $nAsync := 0 }}
+{{ $nJWT := 0 }}
 {{ $hasCB := false }}
 {{ $hasRL := false }}
 {{ $hasLogging := false }}
-{{ $hasAPIKeys := false }}
+{{ $nAPIKeys := 0 }}
+{{ $hasHTTPSec := false }}
 {{ $hasTele := false }}
 {{ $nTele := 0 }}
 {{ $bitTLSEnabled := 5 }}
 {{ range $ks,$vs := .c }}
 	{{ $hasRL = or $hasRL (eq $ks "qos/ratelimit/router") }}
 	{{ $hasLogging = or $hasLogging (eq $ks "telemetry/logging") }}
+	{{ $hasHTTPSec = or $hasHTTPSec (eq $ks "security/http") }}
 	{{ $hasTele = or $hasTele (hasPrefix $ks "telemetry/") }}
 	{{ if hasPrefix $ks "telemetry/"}}{{$nTele = add $nTele 1}}{{end}}
 {{ end }}
+{{ if .a }}{{ $nAsync = len .a }}{{end}}
 {{ if .e }}
 {{ $nEndpoints := len .e }}
 	{{ range .e }}
 		{{ $nBackends = add $nBackends ( len .b ) }}
 		{{ range $ke,$ve := .c }}
-			{{ $hasJWT = or $hasJWT (eq $ke "auth/validator") }}
+			{{ if eq $ke "auth/validator"}}{{$nJWT = add $nJWT 1}}{{end}}
+			{{ if eq $ke "auth/api-keys"}}{{$nAPIKeys = add $nAPIKeys 1}}{{end}}
 			{{ $hasRL = or $hasRL (eq $ke "qos/ratelimit/router") }}
 			{{ $hasRL = or $hasRL (eq $ke "qos/ratelimit/proxy") }}
-			{{ $hasAPIKeys = or $hasAPIKeys (eq $ke "auth/api-keys") }}
 		{{ end }}
 		{{ range .b }}
 			{{ range $kb,$vb := .c }}
@@ -88,29 +92,31 @@ const tmpl = `
 
 	{{/* START TEMPLATE */}}
 
-	{{ $DEBUG }} There are {{ $nEndpoints }} endpoints configured
+
+	{{ $DEBUG }} There are {{ $nAsync }} Async Agents configured
+	{{ $DEBUG }} There are {{ $nEndpoints }} endpoint(s) configured
 
 	{{ if $nBackends }}
-		{{ $DEBUG }} There are {{ $nBackends }} backends configured
+		{{ $DEBUG }} There are {{ $nBackends }} backend(s) configured
 	{{ end }}
 
 	{{ if and $nBackends $nEndpoints }}
 		{{ $avg := div $nBackends $nEndpoints }}
-		{{ if lt $avg 1.3}}
+		{{ if lt $avg 1.1}}
 		{{$WARNING}} You are not taking advantage of aggregation. There are only {{ printf "%.2f" $avg }} backends per endpoint.
 		{{else}}
 		{{$DEBUG}} There are {{ printf "%.2f" $avg }} backends per endpoint
 		{{end}}
 	{{ end }}
 
-	{{ if $hasJWT }}
-		{{$DEBUG}} You have endpoints configured with JWT validation.
+	{{ if $nJWT }}
+		{{$DEBUG}} You have {{ $nJWT }} endpoint(s) configured with JWT validation.
 	{{ else }}
 		{{$WARNING}} No endpoint is protected by JWT
 	{{ end }}
 
-	{{ if $hasAPIKeys }}
-		{{$DEBUG}} You have endpoints requiring API Keys.
+	{{ if $nAPIKeys }}
+		{{$DEBUG}} You have {{ $nAPIKeys }} endpoint(s) requiring API Keys.
 	{{ end }}
 
 
@@ -125,7 +131,9 @@ const tmpl = `
 {{ else }}
 	{{ $ERROR }} No endpoints defined!
 {{ end}}
+
 {{/* SERVICE SETTINGS */}}
+
 {{ if not $hasTele }}
 	{{ $WARNING}} Hope you are good reading logs, because you don't have any telemetry system enabled.
 {{ else }}
@@ -135,10 +143,13 @@ const tmpl = `
 	{{ $WARNING}} You don't have the {{$ColorBlue}}telemetry/logging{{$ColorReset}} component enabled, which is essential in any production installation.
 {{ end }}
 {{ if not (ge (index .d 0) 32.0) }}
-	{{$INFO}} You are not using TLS. Hopefully you are terminating SSL before KrakenD.
+	{{$INFO}} You are not using {{$ColorBlue}}tls{{$ColorReset}}. Hopefully you are terminating SSL before KrakenD.
 {{ else if not (hasBit (index .d 0) $bitTLSEnabled) }}
-	{{$WARNING}} You have configured TLS but it's disabled.
+	{{$WARNING}} You have configured {{$ColorBlue}}tls{{$ColorReset}} but it's disabled!
 {{ end }}
+{{ if not $hasHTTPSec}}
+	{{$WARNING}} You don't have any {{$ColorBlue}}security/http{{$ColorReset}} option enabled
+{{end}}
 `
 
 const source = `{
