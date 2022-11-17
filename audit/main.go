@@ -19,7 +19,7 @@ func main() {
 		"add":       func(x, y int) int { return x + y },
 		"div":       func(x, y int) float64 { return float64(x) / float64(y) },
 		"hasPrefix": strings.HasPrefix,
-		"hasBit":    func(x float64, y int) bool { return (int(x) >> y) == 1 },
+		"hasBit":    func(x float64, y int) bool { return (int(x) >> y)&1 == 1 },
 	})
 	var err error
 	t, err = t.Parse(tmpl)
@@ -74,7 +74,11 @@ const tmpl = `
 {{ if .e }}
 {{ $nEndpoints := len .e }}
 	{{ range .e }}
-		{{ $nBackends = add $nBackends ( len .b ) }}
+		{{ if .b}}
+			{{ $nBackends = add $nBackends ( len .b ) }}
+		{{else}}
+			{{ $ERROR }} There is an endpoint without any backends defined
+		{{end}}
 		{{ range $ke,$ve := .c }}
 			{{ if eq $ke "auth/validator"}}{{$nJWT = add $nJWT 1}}{{end}}
 			{{ if eq $ke "auth/api-keys"}}{{$nAPIKeys = add $nAPIKeys 1}}{{end}}
