@@ -1,13 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"text/template"
-	"fmt"
-	"bytes"
-	"regexp"
-	"os"
 )
 
 func main() {
@@ -16,10 +16,25 @@ func main() {
 	json.Unmarshal([]byte(source), &data)
 	t := template.New("test")
 	t = t.Funcs(template.FuncMap{
-		"add":       func(x, y int) int { return x + y },
+		"add": func(x, y interface{}) int {
+			var a, b int
+			switch v := x.(type) {
+			case int:
+				a = v
+			case float64:
+				a = int(v)
+			}
+			switch v := y.(type) {
+			case int:
+				b = v
+			case float64:
+				b = int(v)
+			}
+			return a + b
+		},
 		"div":       func(x, y int) float64 { return float64(x) / float64(y) },
 		"hasPrefix": strings.HasPrefix,
-		"hasBit":    func(x float64, y int) bool { return (int(x) >> y)&1 == 1 },
+		"hasBit":    func(x float64, y int) bool { return (int(x)>>y)&1 == 1 },
 	})
 	var err error
 	t, err = t.Parse(tmpl)
@@ -34,7 +49,7 @@ func main() {
 
 	// Remove tabs and extra new lines. Doing it in the template it's kind of hard to mantain
 	clean_template := regexp.MustCompile(`[\t\r\n]+`).ReplaceAllString(strings.TrimSpace(buf.String()), "\n")
-	fmt.Fprintf(os.Stdout,clean_template)
+	fmt.Fprintf(os.Stdout, clean_template)
 }
 
 // Define a template.
@@ -61,23 +76,54 @@ const tmpl = `
 {{ $nAPIKeys := 0 }}
 {{ $hasHTTPSec := false }}
 {{ $hasTele := false }}
+{{ $hasRouter := false }}
+{{ $hasCORS := false }}
+{{ $hasBotDetect := false }}
 {{ $nTele := 0 }}
-{{ $bitTLSEnabled := 5 }}
-{{ range $ks,$vs := .c }}
+
+{{/*
+	Service Bits definition (.d array with one element)
+*/}}
+{{ $serviceBits := (index .d 0) }}
+{{ $hasPlugins := hasBit $serviceBits 0 }}
+{{ $hasSequentialStart := hasBit $serviceBits 1 }}
+{{ $hasDebug := hasBit $serviceBits 2 }}
+{{ $hasInsecureConnections := hasBit $serviceBits 3 }}
+{{ $hasDisableREST := hasBit $serviceBits 4 }}
+{{ $hasTLSBlock := hasBit $serviceBits 5 }}
+{{ $hasTLSEnabled := hasBit $serviceBits 6 }}
+{{ $hasMTLS := hasBit $serviceBits 7 }}
+{{ $hasSystemCADisabled := hasBit $serviceBits 8 }}
+{{ $hasTLSCaCerts := hasBit $serviceBits 9 }}
+
+
+{{ range $ks,$vs := .c }} {{/* Service configurations */}}
 	{{ $hasRL = or $hasRL (eq $ks "qos/ratelimit/router") }}
 	{{ $hasLogging = or $hasLogging (eq $ks "telemetry/logging") }}
 	{{ $hasHTTPSec = or $hasHTTPSec (eq $ks "security/http") }}
+	{{ $hasBotDetect = or $hasBotDetect (eq $ks "security/bot-detector") }}
+	{{ $hasRouter = or $hasRouter (eq $ks "router") }}
+	{{ $hasCORS = or $hasCORS (eq $ks "security/cors") }}
 	{{ $hasTele = or $hasTele (hasPrefix $ks "telemetry/") }}
 	{{ if hasPrefix $ks "telemetry/"}}{{$nTele = add $nTele 1}}{{end}}
 {{ end }}
 {{ if .a }}{{ $nAsync = len .a }}{{end}}
 {{ if .e }}
 {{ $nEndpoints := len .e }}
+{{ $nQueryStrings := 0.0 }}
+{{ $nHeadersToPass := 0.0 }}
+
+
 	{{ range .e }}
+
+	{{ $output_encoding := (index .d 0)}}
+	{{ $nQueryStrings = add $nQueryStrings (index .d 1) }}
+	{{ $nHeadersToPass = add $nHeadersToPass (index .d 2) }}
+
 		{{ if .b}}
 			{{ $nBackends = add $nBackends ( len .b ) }}
 		{{else}}
-			{{ $ERROR }} There is an endpoint without any backends defined
+			{{ $ERROR }} There is an endpoint defined without any backends
 		{{end}}
 		{{ range $ke,$ve := .c }}
 			{{ if eq $ke "auth/validator"}}{{$nJWT = add $nJWT 1}}{{end}}
@@ -96,11 +142,66 @@ const tmpl = `
 
 	{{/* START TEMPLATE */}}
 
+{{/* SERVICE SETTINGS */}}
+========== Service settings ==========
+{{ if not $hasCORS }}
+	{{ $DEBUG }} You don't have {{$ColorBlue}}security/cors{{$ColorReset}} and clients won't do cross-origin requests.
+{{ else }}
+	{{ $DEBUG }} CORS is enabled.
+{{ end }}
+{{ if $hasBotDetect }}
+	{{ $DEBUG }} Bot detector is enabled
+{{ end }}
 
-	{{ $DEBUG }} There are {{ $nAsync }} Async Agents configured
-	{{ $DEBUG }} There are {{ $nEndpoints }} endpoint(s) configured
+{{ if not $hasTele }}
+	{{ $WARNING }} Hope you are good reading logs, because you don't have any telemetry system enabled.
+{{ else }}
+	{{ $DEBUG }} You have {{$nTele}} telemetry component(s) enabled.
+{{ end }}
+{{ if not $hasLogging }}
+	{{ $WARNING }} You don't have the {{$ColorBlue}}telemetry/logging{{$ColorReset}} component enabled, which is essential in any production installation.
+{{ end }}
+{{ if $hasPlugins }}
+{{end}}
+{{ if $hasSequentialStart }}
+{{end}}
+{{ if $hasDebug }}
+{{end}}
+{{ if $hasInsecureConnections }}
+{{end}}
+{{ if $hasDisableREST }}
+{{end}}
+{{ if not $hasTLSBlock }}
+	{{$INFO}} You are not using {{$ColorBlue}}tls{{$ColorReset}}. Hopefully you are terminating SSL before KrakenD.
+{{ else }}
+	{{ if not $hasTLSEnabled }}
+		{{$WARNING}} You have configured {{$ColorBlue}}tls{{$ColorReset}} but it's disabled!
+	{{end}}
+	{{ if $hasMTLS }}
+	{{ $DEBUG }} MTLS is configured.
+	{{end}}
+	{{ if $hasSystemCADisabled }}
+	{{ $DEBUG }} The system CA is disabled
+	{{end}}
+	{{ if $hasTLSCaCerts }}
+	{{ $DEBUG }} There are custom CAs for TLS
+	{{end}}
+{{ end }}
+{{ if not $hasHTTPSec}}
+	{{$WARNING}} You don't have any {{$ColorBlue}}security/http{{$ColorReset}} option enabled.
+{{end}}
+{{ if $hasRouter}}
+	{{$WARNING}} You have {{$ColorBlue}}router{{$ColorReset}} customizations overriding standard behavior.
+{{end}}
+{{ if not $hasRL }}
+	{{ $WARNING }} You are exposing an All-You-Can-Eat API without any type of stateless rate limiting.
+{{ end }}
 
-	{{ if $nBackends }}
+========== Endpoint configuration ==========
+{{ $DEBUG }} There are {{ $nEndpoints }} endpoint(s) configured
+{{ $DEBUG }} There are {{ printf "%.2f" (div $nQueryStrings $nEndpoints)}} query strings per endpoint
+{{ $DEBUG }} There are {{ printf "%.2f" (div $nHeadersToPass $nEndpoints)}} passing headers per endpoint
+{{ if $nBackends }}
 		{{ $DEBUG }} There are {{ $nBackends }} backend(s) configured
 	{{ end }}
 
@@ -125,41 +226,19 @@ const tmpl = `
 
 
 	{{ if not $hasCB }}
-		{{ $WARNING}} Your backends are not protected with {{$ColorBlue}}qos/circuit-breaker{{$ColorReset}}.
+		{{ $WARNING }} Your backends are not protected with {{$ColorBlue}}qos/circuit-breaker{{$ColorReset}}.
 	{{ end }}
-
-	{{ if not $hasRL }}
-		{{ $WARNING}} You are exposing an All-You-Can-Eat API without any type of stateless rate limiting.
-	{{ end }}
-
 {{ else }}
 	{{ $ERROR }} No endpoints defined!
 {{ end}}
-
-{{/* SERVICE SETTINGS */}}
-
-{{ if not $hasTele }}
-	{{ $WARNING}} Hope you are good reading logs, because you don't have any telemetry system enabled.
-{{ else }}
-	{{ $DEBUG}} You have {{$nTele}} telemetry component(s) enabled.
-{{ end }}
-{{ if not $hasLogging }}
-	{{ $WARNING}} You don't have the {{$ColorBlue}}telemetry/logging{{$ColorReset}} component enabled, which is essential in any production installation.
-{{ end }}
-{{ if not (ge (index .d 0) 32.0) }}
-	{{$INFO}} You are not using {{$ColorBlue}}tls{{$ColorReset}}. Hopefully you are terminating SSL before KrakenD.
-{{ else if not (hasBit (index .d 0) $bitTLSEnabled) }}
-	{{$WARNING}} You have configured {{$ColorBlue}}tls{{$ColorReset}} but it's disabled!
-{{ end }}
-{{ if not $hasHTTPSec}}
-	{{$WARNING}} You don't have any {{$ColorBlue}}security/http{{$ColorReset}} option enabled
-{{end}}
+========== Async agents ==========
+{{ $DEBUG }} There are {{ $nAsync }} Async Agents configured
 `
 
 const source = `{
 
     "d": [
-		64
+		160
 	],
 	"a": [],
 	"e": [
